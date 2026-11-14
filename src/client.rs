@@ -154,6 +154,29 @@ fn tcp_ping(config: &ClientConfig) -> Result<()> {
     Err(last_error.expect("nonempty addresses").into())
 }
 
+fn reality_test(port_text: &str, url: &str) -> Result<()> {
+    let port = port_text.parse::<u16>().ok().filter(|p| *p != 0)
+        .ok_or_else(|| invalid("HTTP proxy port must be in the range 1..=65535"))?;
+    let rest = url.strip_prefix("https://").ok_or_else(|| invalid("test URL must start with https://"))?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') || authority.contains('\\')
+        || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(invalid("test URL must contain a valid HTTPS host and no credentials or whitespace"));
+    }
+    let proxy = format!("http://127.0.0.1:{port}");
+    let start = Instant::now();
+    let result = Command::new(if cfg!(windows) { "curl.exe" } else { "curl" })
+        .args(["--disable", "--silent", "--show-error", "--fail", "--max-time", "30",
+            "--connect-timeout", "10", "--noproxy", "", "--proxy", &proxy,
+            "--output", if cfg!(windows) { "NUL" } else { "/dev/null" }, "--", url])
+        .status()?;
+    if !result.success() {
+        return Err(invalid(&format!("HTTPS request through the local proxy failed: curl exited with {result}")));
+    }
+    println!("HTTPS through local HTTP proxy: {:.2} ms", start.elapsed().as_secs_f64() * 1000.0);
+    Ok(())
+}
+
 // Profile names are deliberately restricted to one portable path component.
 fn profile_path(directory: &str, name: &str) -> Result<PathBuf> {
     if name.is_empty() || name.len() > 64 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
@@ -215,6 +238,7 @@ pub fn run(args: &[String]) -> Result<()> {
             }
         }
         [command, directory] if command == "list" => list_profiles(directory),
+        [command, port, url] if command == "reality-test" => reality_test(port, url),
         [command, source, directory, name] if command == "import" => {
             let bytes = fs::read(source)?;
             let _ = parse_config(&bytes)?;
@@ -232,6 +256,6 @@ pub fn run(args: &[String]) -> Result<()> {
             fs::remove_file(regular_profile_path(directory, name)?)?;
             Ok(())
         }
-        _ => Err(invalid("usage: client <run|check|tcp-ping> <config.json> | list <directory> | import <source.json> <directory> <name> | export <directory> <name> <destination.json> | delete <directory> <name>")),
+        _ => Err(invalid("usage: client <run|check|tcp-ping> <config.json> | reality-test <http-port> <https-url> | list <directory> | import <source.json> <directory> <name> | export <directory> <name> <destination.json> | delete <directory> <name>")),
     }
 }

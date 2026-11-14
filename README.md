@@ -24,3 +24,5 @@ RustProxy 是 Rust 编写的 Windows 命令行配置管理器，VLESS、XTLS-Vis
 `client.exe import <源文件> <档案目录> <名称>` 导入；`list <档案目录>` 列出；`export <档案目录> <名称> <目标文件>` 导出；`delete <档案目录> <名称>` 删除。编辑可导出为新文件、修改后以新名称导入。导入和导出不会覆盖已有文件。
 
 客户端运行时可使用 `client.exe system-proxy on 1081` 启用当前 Windows 用户的手动 HTTP 代理；`system-proxy status` 查看状态，`system-proxy off` 恢复原设置。启用前会在本地用户目录备份，关闭客户端不会自动恢复，请手动执行 off。若检测到 PAC 或自动发现设置，或代理设置在启用后被其他程序改变，程序会拒绝覆盖；部分连接专属 WPAD 设置可能无法检测。系统代理主要影响遵循 Windows 代理设置的应用，不是 VPN，也不一定接管所有流量。
+
+运行客户端后，`client.exe reality-test 1081 https://example.com/` 使用系统的 curl 通过本地 HTTP 代理执行 HTTPS 请求并报告耗时，可验证实际连接；它需要该目标网站可用，也不代表全部应用的连接都正常。

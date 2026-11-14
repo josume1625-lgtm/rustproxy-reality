@@ -1,0 +1,23 @@
+[package]
+name = "rustproxy"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+
+[[bin]]
+name = "server"
+path = "src/server_main.rs"
+
+[[bin]]
+name = "client"
+path = "src/client_main.rs"
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+[profile.release]
+strip = true
+lto = "thin"

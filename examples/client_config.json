@@ -1,0 +1,10 @@
+{
+  "server_address": "example.com",
+  "server_port": 443,
+  "uuid": "00000000-0000-4000-8000-000000000000",
+  "public_key": "REPLACE_WITH_PUBLIC_KEY",
+  "short_id": "0123456789abcdef",
+  "server_name": "www.microsoft.com",
+  "socks_port": 1080,
+  "http_port": 1081
+}

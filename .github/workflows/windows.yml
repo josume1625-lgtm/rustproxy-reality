@@ -1,0 +1,31 @@
+name: Windows build
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --target x86_64-pc-windows-msvc
+      - run: cargo build --release --target x86_64-pc-windows-msvc
+      - name: Verify and package Xray
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-windows-64.zip -OutFile xray.zip
+          if ((Get-FileHash xray.zip -Algorithm SHA256).Hash -ne '1262522266337b824f07beb8e1375786b437683b3890105469088f8e17e0a69d') { throw 'Xray digest mismatch' }
+          Expand-Archive xray.zip -DestinationPath package
+          Copy-Item target/x86_64-pc-windows-msvc/release/client.exe, target/x86_64-pc-windows-msvc/release/server.exe, README.md -Destination package
+          Copy-Item examples -Destination package -Recurse
+          & package/server.exe keygen
+          if ($LASTEXITCODE -ne 0) { throw 'key generation failed' }
+          Get-ChildItem package -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content package/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustproxy-windows-x86_64
+          path: package/
+          if-no-files-found: error

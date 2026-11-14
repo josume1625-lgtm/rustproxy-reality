@@ -1,0 +1,9 @@
+{
+  "listen": "0.0.0.0",
+  "port": 443,
+  "clients": ["00000000-0000-4000-8000-000000000000"],
+  "dest": "www.microsoft.com:443",
+  "server_names": ["www.microsoft.com"],
+  "private_key": "REPLACE_WITH_PRIVATE_KEY",
+  "short_ids": ["0123456789abcdef"]
+}

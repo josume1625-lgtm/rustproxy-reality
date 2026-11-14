@@ -60,6 +60,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Client import failed' }
     & $clientExe check $imported
     if ($LASTEXITCODE -ne 0) { throw 'Imported profile failed Xray validation' }
+    $guiClient = Join-Path $PackageDir 'client-gui.exe'
+    $guiCheck = Start-Process -FilePath $guiClient -ArgumentList @('check', ('"' + $imported + '"')) -PassThru -Wait -WindowStyle Hidden
+    if ($guiCheck.ExitCode -ne 0) { throw 'GUI executable could not run a configuration check' }
     & $clientExe import-auto (Join-Path $setupDir 'client_config.json') $imported 2>$null
     if ($LASTEXITCODE -eq 0) { throw 'Import unexpectedly overwrote an existing profile' }
     $generated = (& $xrayExe x25519 | Out-String)

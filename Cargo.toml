@@ -1,6 +1,6 @@
 [package]
 name = "rustproxy"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 
@@ -20,3 +20,11 @@ winreg = "0.55"
 [profile.release]
 strip = true
 lto = "thin"
+
+[[bin]]
+name = "server-gui"
+path = "src/server_gui.rs"
+
+[[bin]]
+name = "client-gui"
+path = "src/client_gui.rs"

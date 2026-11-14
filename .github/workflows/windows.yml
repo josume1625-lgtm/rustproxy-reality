@@ -19,7 +19,7 @@ jobs:
           Invoke-WebRequest https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-windows-64.zip -OutFile xray.zip
           if ((Get-FileHash xray.zip -Algorithm SHA256).Hash -ne '1262522266337b824f07beb8e1375786b437683b3890105469088f8e17e0a69d') { throw 'Xray digest mismatch' }
           Expand-Archive xray.zip -DestinationPath package
-          Copy-Item target/x86_64-pc-windows-msvc/release/client.exe, target/x86_64-pc-windows-msvc/release/server.exe -Destination package
+          Copy-Item target/x86_64-pc-windows-msvc/release/client.exe, target/x86_64-pc-windows-msvc/release/server.exe, target/x86_64-pc-windows-msvc/release/client-gui.exe, target/x86_64-pc-windows-msvc/release/server-gui.exe -Destination package
           Copy-Item README.md package/RustProxy-README.md
           Copy-Item LICENSE package/RustProxy-LICENSE.txt
           Copy-Item examples -Destination package -Recurse

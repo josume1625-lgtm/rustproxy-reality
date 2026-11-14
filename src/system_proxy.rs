@@ -140,6 +140,9 @@ mod windows {
             if let Err(restore_error) = restore(&key, &backup) {
                 return Err(io::Error::other(format!("proxy update failed: {e}; restoration failed: {restore_error}; backup retained at {}", path.display())).into());
             }
+            if let Err(remove_error) = fs::remove_file(&path) {
+                return Err(io::Error::other(format!("proxy update failed: {e}; original settings restored but backup could not be removed: {remove_error}" )).into());
+            }
             return Err(e);
         }
         println!("Windows system proxy enabled at 127.0.0.1:{port}; backup: {}", path.display());

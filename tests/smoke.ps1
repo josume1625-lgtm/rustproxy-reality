@@ -49,6 +49,19 @@ function Start-Wrapper([string]$exe, [string]$config, [string]$label) {
 
 try {
     New-Item -ItemType Directory -Path $tempDir | Out-Null
+    $setupDir = Join-Path $tempDir 'generated'
+    & $serverExe setup $setupDir '127.0.0.1' 'www.microsoft.com' 'www.microsoft.com:443' '127.0.0.1'
+    if ($LASTEXITCODE -ne 0) { throw 'Server setup failed' }
+    $generatedServer = Get-Content (Join-Path $setupDir 'server_config.json') -Raw | ConvertFrom-Json
+    $generatedClient = Get-Content (Join-Path $setupDir 'client_config.json') -Raw | ConvertFrom-Json
+    if ($generatedServer.port -lt 1 -or $generatedServer.port -ne $generatedClient.server_port -or $generatedClient.PSObject.Properties.Name -contains 'private_key') { throw 'Generated profiles are invalid' }
+    $imported = Join-Path $tempDir 'imported.json'
+    & $clientExe import-auto (Join-Path $setupDir 'client_config.json') $imported
+    if ($LASTEXITCODE -ne 0) { throw 'Client import failed' }
+    & $clientExe check $imported
+    if ($LASTEXITCODE -ne 0) { throw 'Imported profile failed Xray validation' }
+    & $clientExe import-auto (Join-Path $setupDir 'client_config.json') $imported 2>$null
+    if ($LASTEXITCODE -eq 0) { throw 'Import unexpectedly overwrote an existing profile' }
     $generated = (& $xrayExe x25519 | Out-String)
     if ($LASTEXITCODE -ne 0) { throw 'Xray key generation failed' }
     if ($generated -notmatch '(?m)^PrivateKey:\s*(\S+)') { throw 'Unexpected Xray private key output' }

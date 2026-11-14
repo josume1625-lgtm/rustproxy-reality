@@ -50,17 +50,28 @@ function Start-Wrapper([string]$exe, [string]$config, [string]$label) {
 try {
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     $setupDir = Join-Path $tempDir 'generated'
-    & $serverExe quick-setup $setupDir '127.0.0.1' 'local'
+    $setupPort = Get-FreePort
+    & $serverExe local-setup $setupDir $setupPort
     if ($LASTEXITCODE -ne 0) { throw 'Server setup failed' }
     $generatedServer = Get-Content (Join-Path $setupDir 'server_config.json') -Raw | ConvertFrom-Json
     $generatedClient = Get-Content (Join-Path $setupDir 'client_config.json') -Raw | ConvertFrom-Json
-    if ($generatedServer.port -lt 1 -or $generatedServer.port -ne $generatedClient.server_port -or $generatedClient.PSObject.Properties.Name -contains 'private_key') { throw 'Generated profiles are invalid' }
+    if ($generatedServer.port -ne $setupPort -or $generatedServer.port -ne $generatedClient.server_port -or $generatedClient.PSObject.Properties.Name -contains 'private_key') { throw 'Generated profiles are invalid' }
     if ($generatedServer.listen -ne '127.0.0.1' -or $generatedServer.dest -ne 'www.microsoft.com:443') { throw 'Unexpected quick setup defaults' }
+    $occupied = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $occupied.Start()
+    try {
+        $occupiedPort = ([Net.IPEndPoint]$occupied.LocalEndpoint).Port
+        & $serverExe local-setup (Join-Path $tempDir 'occupied') $occupiedPort 2>$null
+        if ($LASTEXITCODE -eq 0) { throw 'Setup unexpectedly accepted an occupied local port' }
+    } finally { $occupied.Stop() }
     & $serverExe quick-setup (Join-Path $tempDir 'invalid') '127.0.0.1' 'external' 2>$null
     if ($LASTEXITCODE -eq 0) { throw 'External setup unexpectedly accepted a loopback address' }
     $imported = Join-Path $tempDir 'imported.json'
-    & $clientExe import-auto (Join-Path $setupDir 'client_config.json') $imported
+    $tunnelPort = Get-FreePort
+    & $clientExe import-tunnel (Join-Path $setupDir 'client_config.json') $imported '127.0.0.1' $tunnelPort
     if ($LASTEXITCODE -ne 0) { throw 'Client import failed' }
+    $importedConfig = Get-Content $imported -Raw | ConvertFrom-Json
+    if ($importedConfig.server_port -ne $tunnelPort -or $tunnelPort -eq $setupPort) { throw 'Tunnel port was not applied' }
     & $clientExe check $imported
     if ($LASTEXITCODE -ne 0) { throw 'Imported profile failed Xray validation' }
     $guiClient = Join-Path $PackageDir 'client-gui.exe'
@@ -88,7 +99,7 @@ try {
         private_key = $privateKey; short_ids = @($shortId)
     }
     $client = @{
-        server_address = '127.0.0.1'; server_port = $serverPort; uuid = $uuid
+        server_address = '127.0.0.1'; server_port = $tunnelPort; uuid = $uuid
         public_key = $publicKey; short_id = $shortId; server_name = 'www.microsoft.com'
         socks_port = $socksPort; http_port = $httpPort
     }
@@ -101,6 +112,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Client configuration check failed' }
     $serverProcess = Start-Wrapper $serverExe $serverConfig 'server'
     Wait-Listening $serverPort $serverProcess
+    # Simulate a TCP tunnel with a distinct public-facing port.
+    $tunnelConfig = Join-Path $tempDir 'tunnel.json'
+    @{
+        log = @{ loglevel = 'warning' }
+        inbounds = @(@{ listen = '127.0.0.1'; port = $tunnelPort; protocol = 'dokodemo-door'; settings = @{ address = '127.0.0.1'; port = $serverPort; network = 'tcp' } })
+        outbounds = @(@{ protocol = 'freedom' })
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $tunnelConfig -Encoding utf8NoBOM
+    $tunnelProcess = Start-Process -FilePath $xrayExe -ArgumentList @('run', '-config', ('"' + $tunnelConfig + '"')) -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $tempDir 'tunnel.out') -RedirectStandardError (Join-Path $tempDir 'tunnel.err')
+    $processes.Add($tunnelProcess)
+    Wait-Listening $tunnelPort $tunnelProcess
     & $clientExe tcp-ping $clientConfig
     if ($LASTEXITCODE -ne 0) { throw 'TCP ping failed' }
     $clientProcess = Start-Wrapper $clientExe $clientConfig 'client'

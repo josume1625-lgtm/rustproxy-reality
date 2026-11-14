@@ -30,6 +30,12 @@ pub fn quick_create(directory: &Path, address: &str, external: bool) -> Result<S
     create(directory, address, DEFAULT_SERVER_NAME, DEFAULT_DEST, bind)
 }
 
+/// A local-only listener for a separate tunnelling program. Zero asks the OS
+/// for a free port; the client later supplies the tunnel's public endpoint.
+pub fn tunnel_create(directory: &Path, port: u16) -> Result<SetupResult> {
+    create_with_port(directory, "127.0.0.1", DEFAULT_SERVER_NAME, DEFAULT_DEST, "127.0.0.1", port)
+}
+
 fn invalid(message: &str) -> Box<dyn Error> {
     io::Error::new(io::ErrorKind::InvalidInput, message.to_owned()).into()
 }
@@ -96,11 +102,6 @@ fn validate_host(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(windows)]
-fn gui_field<'a>(data: &'a serde_json::Value, name: &str) -> Result<&'a str> {
-    data.get(name).and_then(|v| v.as_str()).ok_or_else(|| invalid("invalid setup dialog result"))
-}
-
 fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -124,6 +125,10 @@ fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// may still fail if another process acquires it before Xray starts.
 /// `address` must be the client-reachable hostname or IP, not inferred locally.
 pub fn create(directory: &Path, address: &str, server_name: &str, dest: &str, bind: &str) -> Result<SetupResult> {
+    create_with_port(directory, address, server_name, dest, bind, 0)
+}
+
+fn create_with_port(directory: &Path, address: &str, server_name: &str, dest: &str, bind: &str, requested_port: u16) -> Result<SetupResult> {
     validate_host(address, "client-facing server address")?;
     validate_host(server_name, "server name")?;
     validate_host(dest, "fallback destination")?;
@@ -135,7 +140,7 @@ pub fn create(directory: &Path, address: &str, server_name: &str, dest: &str, bi
         return Err(invalid("fallback destination must contain a valid host and port"));
     }
     let ip: IpAddr = bind.parse().map_err(|_| invalid("listen address must be an IP address"))?;
-    let listener = TcpListener::bind((ip, 0))?;
+    let listener = TcpListener::bind((ip, requested_port))?;
     let port = listener.local_addr()?.port();
     let (private_key, public_key) = key_pair()?;
     let client_uuid = uuid()?;
@@ -205,16 +210,11 @@ function TextAt($text, $top) {
   $form.Controls.Add($field)
   return $field
 }
-$public = New-Object System.Windows.Forms.CheckBox
-$public.Left = 20; $public.Top = 15; $public.Width = 520; $public.Height = 26
-$public.Text = '允许其他设备连接（监听所有 IPv4 地址）'
-$form.Controls.Add($public)
-LabelAt '服务器 IP 或域名（仅允许其他设备连接时需要填写）' 55
-$address = TextAt '' 80
-$address.Enabled = $false
-$public.Add_CheckedChanged({ $address.Enabled = $public.Checked })
-LabelAt '自动选择端口并生成密钥，认证后的流量通过本机网络转发。' 120
-LabelAt '连接文件含凭据，请只通过可信的加密渠道分享。' 150
+LabelAt '本地监听端口（留空或填 0 表示自动选择）' 15
+$port = TextAt '' 40
+LabelAt '将内网穿透程序指向 127.0.0.1 和所选端口。' 80
+LabelAt '自动生成加密密钥，流量通过本机网络转发。' 110
+LabelAt '连接文件含凭据，请只通过可信的加密渠道分享。' 140
 $ok = New-Object System.Windows.Forms.Button
 $ok.Text = '启动服务'; $ok.Left = 340; $ok.Top = 195; $ok.Width = 90
 $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -226,18 +226,16 @@ $form.AcceptButton = $ok; $form.CancelButton = $cancel
 $form.Add_FormClosing({
   param($sender, $event)
   if ($form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK) { return }
-  if ($public.Checked -and [string]::IsNullOrWhiteSpace($address.Text)) {
-    [System.Windows.Forms.MessageBox]::Show('请填写其他设备能访问的服务器 IP 或域名。', 'RustProxy') | Out-Null
-    $event.Cancel = $true
-  } elseif ($public.Checked -and ($address.Text -eq '127.0.0.1' -or $address.Text -eq 'localhost' -or $address.Text -eq '::1')) {
-    [System.Windows.Forms.MessageBox]::Show('请填写外部设备能够访问的服务器 IP 或域名。', 'RustProxy') | Out-Null
+  $p = 0
+  if (-not [string]::IsNullOrWhiteSpace($port.Text) -and (-not [int]::TryParse($port.Text, [ref]$p) -or $p -lt 0 -or $p -gt 65535)) {
+    [System.Windows.Forms.MessageBox]::Show('请输入 0 到 65535 之间的端口号。', 'RustProxy') | Out-Null
     $event.Cancel = $true
   }
 })
 if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
   [Console]::Out.Write('{"cancelled":true}')
 } else {
-  $v = @{ cancelled = $false; address = $address.Text; public = $public.Checked }
+  $v = @{ cancelled = $false; port = $(if ([string]::IsNullOrWhiteSpace($port.Text)) { 0 } else { [int]$port.Text }) }
   [Console]::Out.Write(($v | ConvertTo-Json -Compress))
 }
 $form.Dispose()
@@ -255,9 +253,9 @@ $form.Dispose()
     if !output.status.success() { return Err(io::Error::other("Unable to show the server setup dialog").into()); }
     let data: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) { return Ok(None); }
-    let external = data.get("public").and_then(|v| v.as_bool()) == Some(true);
-    let address = if external { gui_field(&data, "address")? } else { "127.0.0.1" };
-    quick_create(directory, address, external).map(Some)
+    let port = data.get("port").and_then(|v| v.as_u64()).and_then(|p| u16::try_from(p).ok())
+        .ok_or_else(|| invalid("invalid local port"))?;
+    tunnel_create(directory, port).map(Some)
 }
 
 #[cfg(not(windows))]

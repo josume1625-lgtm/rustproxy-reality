@@ -14,6 +14,11 @@ fn execute(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             println!("SOCKS5: {}\nHTTP: {}", ports.socks_port, ports.http_port);
             Ok(())
         },
+        [cmd, source, dest, address, port] if cmd == "import-tunnel" => {
+            let ports = client_setup::import_endpoint(Path::new(source), Path::new(dest), address, port.parse()?)?;
+            println!("SOCKS5: {}\nHTTP: {}", ports.socks_port, ports.http_port);
+            Ok(())
+        },
         [cmd, rest @ ..] if cmd == "system-proxy" => system_proxy::run(rest),
         _ => client::run(args),
     }

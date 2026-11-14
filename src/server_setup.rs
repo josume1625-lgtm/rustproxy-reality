@@ -16,6 +16,20 @@ pub struct SetupResult {
     pub port: u16,
 }
 
+const DEFAULT_SERVER_NAME: &str = "www.microsoft.com";
+const DEFAULT_DEST: &str = "www.microsoft.com:443";
+
+/// Keep the Reality transport parameters internal to the common setup flow.
+/// Traffic after authentication still leaves through the server's normal network.
+pub fn quick_create(directory: &Path, address: &str, external: bool) -> Result<SetupResult> {
+    if external && (address.eq_ignore_ascii_case("localhost")
+        || address.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified())) {
+        return Err(invalid("external access needs a server address reachable by the client"));
+    }
+    let bind = if external { "0.0.0.0" } else { "127.0.0.1" };
+    create(directory, address, DEFAULT_SERVER_NAME, DEFAULT_DEST, bind)
+}
+
 fn invalid(message: &str) -> Box<dyn Error> {
     io::Error::new(io::ErrorKind::InvalidInput, message.to_owned()).into()
 }
@@ -176,7 +190,7 @@ Add-Type -AssemblyName System.Drawing
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'RustProxy 服务端设置'
-$form.ClientSize = New-Object System.Drawing.Size(560, 360)
+$form.ClientSize = New-Object System.Drawing.Size(560, 250)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -191,30 +205,29 @@ function TextAt($text, $top) {
   $form.Controls.Add($field)
   return $field
 }
-LabelAt '服务器地址（客户端连接的公网 IP 或域名；本机测试填 127.0.0.1）' 15
-$address = TextAt '127.0.0.1' 40
-LabelAt '目标网站的服务器名称（SNI）' 75
-$name = TextAt 'www.microsoft.com' 100
-LabelAt 'Reality 目标站（域名:端口）' 135
-$dest = TextAt 'www.microsoft.com:443' 160
 $public = New-Object System.Windows.Forms.CheckBox
-$public.Left = 20; $public.Top = 200; $public.Width = 520; $public.Height = 26
-$public.Text = '允许外部设备连接（监听所有 IPv4 地址）'
+$public.Left = 20; $public.Top = 15; $public.Width = 520; $public.Height = 26
+$public.Text = '允许其他设备连接（监听所有 IPv4 地址）'
 $form.Controls.Add($public)
-LabelAt '配置包含连接凭据。客户端文件只通过可信方式分享。' 235
+LabelAt '服务器 IP 或域名（仅允许其他设备连接时需要填写）' 55
+$address = TextAt '' 80
+$address.Enabled = $false
+$public.Add_CheckedChanged({ $address.Enabled = $public.Checked })
+LabelAt '自动选择端口并生成密钥，认证后的流量通过本机网络转发。' 120
+LabelAt '连接文件含凭据，请只通过可信的加密渠道分享。' 150
 $ok = New-Object System.Windows.Forms.Button
-$ok.Text = '生成配置'; $ok.Left = 340; $ok.Top = 285; $ok.Width = 90
+$ok.Text = '启动服务'; $ok.Left = 340; $ok.Top = 195; $ok.Width = 90
 $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
 $cancel = New-Object System.Windows.Forms.Button
-$cancel.Text = '取消'; $cancel.Left = 450; $cancel.Top = 285; $cancel.Width = 90
+$cancel.Text = '取消'; $cancel.Left = 450; $cancel.Top = 195; $cancel.Width = 90
 $cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
 $form.Controls.Add($ok); $form.Controls.Add($cancel)
 $form.AcceptButton = $ok; $form.CancelButton = $cancel
 $form.Add_FormClosing({
   param($sender, $event)
   if ($form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK) { return }
-  if ([string]::IsNullOrWhiteSpace($address.Text) -or [string]::IsNullOrWhiteSpace($name.Text) -or [string]::IsNullOrWhiteSpace($dest.Text)) {
-    [System.Windows.Forms.MessageBox]::Show('请填写所有设置。', 'RustProxy') | Out-Null
+  if ($public.Checked -and [string]::IsNullOrWhiteSpace($address.Text)) {
+    [System.Windows.Forms.MessageBox]::Show('请填写其他设备能访问的服务器 IP 或域名。', 'RustProxy') | Out-Null
     $event.Cancel = $true
   } elseif ($public.Checked -and ($address.Text -eq '127.0.0.1' -or $address.Text -eq 'localhost' -or $address.Text -eq '::1')) {
     [System.Windows.Forms.MessageBox]::Show('请填写外部设备能够访问的服务器 IP 或域名。', 'RustProxy') | Out-Null
@@ -224,7 +237,7 @@ $form.Add_FormClosing({
 if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
   [Console]::Out.Write('{"cancelled":true}')
 } else {
-  $v = @{ cancelled = $false; address = $address.Text; server_name = $name.Text; dest = $dest.Text; public = $public.Checked }
+  $v = @{ cancelled = $false; address = $address.Text; public = $public.Checked }
   [Console]::Out.Write(($v | ConvertTo-Json -Compress))
 }
 $form.Dispose()
@@ -242,8 +255,9 @@ $form.Dispose()
     if !output.status.success() { return Err(io::Error::other("Unable to show the server setup dialog").into()); }
     let data: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) { return Ok(None); }
-    let bind = if data.get("public").and_then(|v| v.as_bool()) == Some(true) { "0.0.0.0" } else { "127.0.0.1" };
-    create(directory, gui_field(&data, "address")?, gui_field(&data, "server_name")?, gui_field(&data, "dest")?, bind).map(Some)
+    let external = data.get("public").and_then(|v| v.as_bool()) == Some(true);
+    let address = if external { gui_field(&data, "address")? } else { "127.0.0.1" };
+    quick_create(directory, address, external).map(Some)
 }
 
 #[cfg(not(windows))]

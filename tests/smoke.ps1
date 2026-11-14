@@ -50,11 +50,14 @@ function Start-Wrapper([string]$exe, [string]$config, [string]$label) {
 try {
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     $setupDir = Join-Path $tempDir 'generated'
-    & $serverExe setup $setupDir '127.0.0.1' 'www.microsoft.com' 'www.microsoft.com:443' '127.0.0.1'
+    & $serverExe quick-setup $setupDir '127.0.0.1' 'local'
     if ($LASTEXITCODE -ne 0) { throw 'Server setup failed' }
     $generatedServer = Get-Content (Join-Path $setupDir 'server_config.json') -Raw | ConvertFrom-Json
     $generatedClient = Get-Content (Join-Path $setupDir 'client_config.json') -Raw | ConvertFrom-Json
     if ($generatedServer.port -lt 1 -or $generatedServer.port -ne $generatedClient.server_port -or $generatedClient.PSObject.Properties.Name -contains 'private_key') { throw 'Generated profiles are invalid' }
+    if ($generatedServer.listen -ne '127.0.0.1' -or $generatedServer.dest -ne 'www.microsoft.com:443') { throw 'Unexpected quick setup defaults' }
+    & $serverExe quick-setup (Join-Path $tempDir 'invalid') '127.0.0.1' 'external' 2>$null
+    if ($LASTEXITCODE -eq 0) { throw 'External setup unexpectedly accepted a loopback address' }
     $imported = Join-Path $tempDir 'imported.json'
     & $clientExe import-auto (Join-Path $setupDir 'client_config.json') $imported
     if ($LASTEXITCODE -ne 0) { throw 'Client import failed' }
@@ -65,18 +68,13 @@ try {
     if ($guiCheck.ExitCode -ne 0) { throw 'GUI executable could not run a configuration check' }
     & $clientExe import-auto (Join-Path $setupDir 'client_config.json') $imported 2>$null
     if ($LASTEXITCODE -eq 0) { throw 'Import unexpectedly overwrote an existing profile' }
-    $generated = (& $xrayExe x25519 | Out-String)
-    if ($LASTEXITCODE -ne 0) { throw 'Xray key generation failed' }
-    if ($generated -notmatch '(?m)^PrivateKey:\s*(\S+)') { throw 'Unexpected Xray private key output' }
-    $privateKey = $Matches[1]
-    if ($generated -notmatch '(?m)^(?:Password \(PublicKey\)|PublicKey):\s*(\S+)') { throw 'Unexpected Xray public key output' }
-    $publicKey = $Matches[1]
-    $uuid = [guid]::NewGuid().ToString()
+    $privateKey = $generatedServer.private_key
+    $publicKey = $generatedClient.public_key
+    $uuid = $generatedClient.uuid
     $badUuid = [guid]::NewGuid().ToString()
-    $shortBytes = [byte[]]::new(8)
-    [Security.Cryptography.RandomNumberGenerator]::Fill($shortBytes)
-    $shortId = [Convert]::ToHexString($shortBytes).ToLowerInvariant()
-    $serverPort = Get-FreePort
+    $shortId = $generatedClient.short_id
+    $serverPort = $generatedServer.port
+    [void]$ports.Add($serverPort)
     $socksPort = Get-FreePort
     $httpPort = Get-FreePort
     $badSocksPort = Get-FreePort

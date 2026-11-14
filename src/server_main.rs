@@ -29,6 +29,16 @@ fn execute(args: &[String]) -> Result<()> {
         [] => tray::run(None, false, Some(setup_wizard)),
         [cmd] if cmd == "tray" => tray::run(None, false, Some(setup_wizard)),
         [cmd, path] if cmd == "tray" => tray::run(Some(path), false, Some(setup_wizard)),
+        [cmd, dir, address, scope] if cmd == "quick-setup" => {
+            let external = match scope.as_str() {
+                "local" => false,
+                "external" => true,
+                _ => return Err("scope must be local or external".into()),
+            };
+            let result = server_setup::quick_create(Path::new(dir), address, external)?;
+            println!("server configuration: {}\nclient configuration: {}\nport: {}", result.server_config.display(), result.client_config.display(), result.port);
+            Ok(())
+        },
         [cmd, dir, address, name, dest, bind] if cmd == "setup" => {
             let result = server_setup::create(Path::new(dir), address, name, dest, bind)?;
             println!("server configuration: {}\nclient configuration: {}\nport: {}", result.server_config.display(), result.client_config.display(), result.port);

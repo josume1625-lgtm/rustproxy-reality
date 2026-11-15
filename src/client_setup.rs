@@ -94,13 +94,18 @@ pub fn import_auto(source: &Path, destination: &Path) -> Result<ImportedPorts> {
 /// Import a profile using the address and port of the user's tunnel endpoint.
 /// The source profile remains unchanged and the destination is never overwritten.
 pub fn import_endpoint(source: &Path, destination: &Path, address: &str, port: u16) -> Result<ImportedPorts> {
+    validate_endpoint(address, port)?;
+    import_profile(source, destination, Some((address, port)))
+}
+
+fn validate_endpoint(address: &str, port: u16) -> Result<()> {
     let valid_address = address.parse::<std::net::IpAddr>().is_ok() ||
         (address.len() <= 253 && !address.is_empty() && address.split('.').all(|label| {
             !label.is_empty() && label.len() <= 63 && !label.starts_with('-') && !label.ends_with('-') &&
                 label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
         }));
     if !valid_address || port == 0 { return Err(invalid("Invalid tunnel address or port").into()); }
-    import_profile(source, destination, Some((address, port)))
+    Ok(())
 }
 
 fn import_profile(source: &Path, destination: &Path, endpoint: Option<(&str, u16)>) -> Result<ImportedPorts> {
@@ -110,11 +115,19 @@ fn import_profile(source: &Path, destination: &Path, endpoint: Option<(&str, u16
     }
     let raw = fs::read(source)?;
     if raw.len() > 65536 { return Err(invalid("Input profile is too large").into()); }
-    let mut input: ImportedProfile = serde_json::from_slice(&raw)?;
+    import_bytes(&raw, destination, endpoint)
+}
+
+fn import_bytes(raw: &[u8], destination: &Path, endpoint: Option<(&str, u16)>) -> Result<ImportedPorts> {
+    if raw.len() > 65536 { return Err(invalid("Input profile is too large").into()); }
+    let mut value: serde_json::Value = serde_json::from_slice(raw)?;
     if let Some((address, port)) = endpoint {
-        input.server_address = address.to_owned();
-        input.server_port = port;
+        validate_endpoint(address, port)?;
+        let fields = value.as_object_mut().ok_or_else(|| invalid("Invalid client credentials"))?;
+        fields.insert("server_address".into(), address.into());
+        fields.insert("server_port".into(), port.into());
     }
+    let input: ImportedProfile = serde_json::from_value(value)?;
     validate(&input)?;
     // The input ports are deliberately ignored: they may already be in use on
     // this computer. Keep the holders alive through the write.
@@ -303,10 +316,23 @@ pub fn import_wizard() -> Result<Option<std::path::PathBuf>> {
         let len = buffer.iter().position(|&c| c == 0).ok_or_else(|| invalid("Invalid file dialog output"))?;
         Ok(Some(std::path::PathBuf::from(OsString::from_wide(&buffer[..len]))))
     }
-    let source = match dialog(false)? { Some(path) => path, None => return Ok(None) };
+    let choice = unsafe { MessageBoxW(ptr::null_mut(), wide("从剪贴板导入复制的验证信息？选择“否”可从文件导入。").as_ptr(), wide("RustProxy 客户端").as_ptr(), 0x23) };
+    if choice == 2 { return Ok(None); }
+    let clipboard = if choice == 6 {
+        use std::os::windows::process::CommandExt;
+        let program = std::env::var_os("ProgramFiles").map(std::path::PathBuf::from)
+            .map(|p| p.join("PowerShell").join("7").join("pwsh.exe")).filter(|p| p.is_file())
+            .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"));
+        let output = std::process::Command::new(program)
+            .args(["-NoLogo", "-NoProfile", "-STA", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); [Console]::Out.Write([Windows.Forms.Clipboard]::GetText())"])
+            .creation_flags(0x08000000).output()?;
+        if !output.status.success() || output.stdout.len() > 65536 { return Err(invalid("无法读取剪贴板或内容过大").into()); }
+        Some(output.stdout)
+    } else { None };
+    let source = if clipboard.is_none() { match dialog(false)? { Some(path) => Some(path), None => return Ok(None) } } else { None };
     let (address, port) = match tunnel_endpoint_dialog()? { Some(endpoint) => endpoint, None => return Ok(None) };
     let destination = match dialog(true)? { Some(path) => path, None => return Ok(None) };
-    let ports = import_endpoint(&source, &destination, &address, port)?;
+    let ports = if let Some(raw) = clipboard { import_bytes(&raw, &destination, Some((&address, port)))? } else { import_endpoint(source.as_ref().unwrap(), &destination, &address, port)? };
     let text = wide(&format!("配置导入成功。\nSOCKS5 端口：{}\nHTTP 端口：{}\n\n配置文件以明文保存连接凭据，请确保仅自己有权访问该文件和所在目录。", ports.socks_port, ports.http_port));
     let caption = wide("RustProxy 客户端");
     unsafe { MessageBoxW(ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x40); }
@@ -322,6 +348,20 @@ pub fn import_wizard() -> Result<Option<std::path::PathBuf>> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn pasted_credentials_create_profile_with_tunnel_endpoint() {
+        let dir = std::env::temp_dir().join(format!("rustproxy-paste-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir(&dir).unwrap();
+        let destination = dir.join("client.json");
+        let input = br#"{"uuid":"4f4ce912-06fe-48a4-9ea6-82419339a62e","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","short_id":"0123456789abcdef","server_name":"www.microsoft.com"}"#;
+        import_bytes(input, &destination, Some(("tunnel.example.com", 54321))).unwrap();
+        let output: serde_json::Value = serde_json::from_slice(&fs::read(&destination).unwrap()).unwrap();
+        assert_eq!(output["server_address"], "tunnel.example.com");
+        assert_eq!(output["server_port"], 54321);
+        assert_eq!(output["short_id"], "0123456789abcdef");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn imports_with_distinct_ports_without_overwriting() {

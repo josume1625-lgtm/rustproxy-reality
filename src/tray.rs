@@ -42,6 +42,7 @@ mod windows {
         fn CreatePopupMenu()->Handle; fn AppendMenuW(menu:Handle,flags:u32,id:usize,text:*const u16)->i32; fn TrackPopupMenu(menu:Handle,flags:u32,x:i32,y:i32,reserved:i32,hwnd:Hwnd,rect:Handle)->u32; fn DestroyMenu(menu:Handle)->i32;
         fn GetCursorPos(p:*mut Point)->i32; fn SetForegroundWindow(hwnd:Hwnd)->i32; fn SetTimer(hwnd:Hwnd,id:usize,interval:u32,callback:Handle)->usize;
         fn RegisterWindowMessageW(text:*const u16)->u32;
+        fn PostMessageW(hwnd:Hwnd,msg:u32,w:Wparam,l:Lparam)->i32;
     }
     #[link(name="shell32")] extern "system" { fn Shell_NotifyIconW(message:u32,data:*mut NotifyIcon)->i32; fn ShellExecuteW(hwnd:Hwnd,op:*const u16,file:*const u16,params:*const u16,dir:*const u16,show:i32)->Handle; }
     #[link(name="comdlg32")] extern "system" { fn GetOpenFileNameW(data:*mut OpenFileName)->i32; }
@@ -144,7 +145,7 @@ mod windows {
             let entries=[(9,"配置向导"),(1,"选择配置文件"),(2,"编辑当前配置"),(3,"启动"),(4,"停止"),(5,"查看状态"),(6,"启用 Windows 系统代理"),(7,"恢复 Windows 系统代理"),(8,"退出")];
             for (id,label) in entries { if (!s.client && (id==6 || id==7)) || (id==9 && s.wizard.is_none()) { continue; } AppendMenuW(menu,0,id,wide(label).as_ptr()); }
             let mut p:Point=zeroed(); GetCursorPos(&mut p); SetForegroundWindow(hwnd);
-            let choice=TrackPopupMenu(menu,0x100|0x2,p.x,p.y,0,hwnd,ptr::null_mut()); DestroyMenu(menu);
+            let choice=TrackPopupMenu(menu,0x100|0x2,p.x,p.y,0,hwnd,ptr::null_mut()); PostMessageW(hwnd,0,0,0); DestroyMenu(menu);
             match choice {
                 9 => if s.running.is_some() { message(hwnd,"请先停止运行，再打开配置向导。"); } else if let Some(wizard)=s.wizard { match wizard() { Ok(Some(path))=>{choose_config(hwnd,s,path);start_selected(hwnd,s);}, Ok(None)=>(), Err(e)=>message(hwnd,&format!("配置向导失败：{e}")) } },
                 1 => if s.running.is_some() { message(hwnd,"请先停止运行，再切换配置。"); } else if let Some(path)=select_file(hwnd) { choose_config(hwnd,s,path); },

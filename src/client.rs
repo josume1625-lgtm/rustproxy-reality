@@ -105,6 +105,11 @@ fn xray_path() -> PathBuf {
 
 fn execute_xray(config: &ClientConfig, test: bool) -> Result<()> {
     let mut command = Command::new(xray_path());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
     command.arg("run");
     if test {
         command.arg("-test");

@@ -11,7 +11,8 @@ fn setup_wizard() -> Result<Option<PathBuf>> {
     let directory = PathBuf::from(root).join("RustProxy").join("servers").join(format!("profile-{stamp}-{}", std::process::id()));
     let Some(result) = server_setup::wizard(&directory)? else { return Ok(None) };
     let profile: serde_json::Value = serde_json::from_slice(&std::fs::read(&result.client_config)?)?;
-    let details = format!("本机监听：127.0.0.1:{}\nUUID：{}\nPublic key：{}\nShort ID：{}\nServer name：{}\n\n客户端配置：{}", result.port, profile["uuid"], profile["public_key"], profile["short_id"], profile["server_name"], result.client_config.display());
+    let credentials = serde_json::json!({"uuid": profile["uuid"], "public_key": profile["public_key"], "short_id": profile["short_id"], "server_name": profile["server_name"]});
+    let details = serde_json::json!({"display":format!("本机监听：127.0.0.1:{}\n客户端验证信息：\n{}\n\n客户端配置：{}", result.port, serde_json::to_string_pretty(&credentials)?, result.client_config.display()),"credentials":serde_json::to_string(&credentials)?}).to_string();
     notify(&details);
     Ok(Some(result.server_config))
 }
@@ -19,7 +20,7 @@ fn setup_wizard() -> Result<Option<PathBuf>> {
 #[cfg(windows)]
 fn notify(text: &str) {
     use std::os::windows::process::CommandExt;
-    const SCRIPT: &str = r#"Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; [Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $d=[Console]::In.ReadToEnd(); $f=New-Object Windows.Forms.Form; $f.Text='RustProxy 连接密钥'; $f.ClientSize='640,360'; $f.StartPosition='CenterScreen'; $b=New-Object Windows.Forms.TextBox; $b.Multiline=$true; $b.ReadOnly=$true; $b.ScrollBars='Vertical'; $b.SetBounds(15,15,610,275); $b.Text=$d; $f.Controls.Add($b); $c=New-Object Windows.Forms.Button; $c.Text='复制连接信息'; $c.SetBounds(300,310,190,30); $c.Add_Click({[Windows.Forms.Clipboard]::SetText($d);$c.Text='已复制'}); $f.Controls.Add($c); $x=New-Object Windows.Forms.Button; $x.Text='关闭'; $x.SetBounds(510,310,90,30); $x.Add_Click({$f.Close()}); $f.Controls.Add($x); [void]$f.ShowDialog()"#;
+    const SCRIPT: &str = r#"Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; [Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $d=[Console]::In.ReadToEnd() | ConvertFrom-Json; $f=New-Object Windows.Forms.Form; $f.Text='RustProxy 连接密钥'; $f.ClientSize='640,360'; $f.StartPosition='CenterScreen'; $b=New-Object Windows.Forms.TextBox; $b.Multiline=$true; $b.ReadOnly=$true; $b.ScrollBars='Vertical'; $b.SetBounds(15,15,610,275); $b.Text=$d.display; $f.Controls.Add($b); $c=New-Object Windows.Forms.Button; $c.Text='复制验证信息'; $c.SetBounds(300,310,190,30); $c.Add_Click({[Windows.Forms.Clipboard]::SetText($d.credentials);$c.Text='已复制'}); $f.Controls.Add($c); $x=New-Object Windows.Forms.Button; $x.Text='关闭'; $x.SetBounds(510,310,90,30); $x.Add_Click({$f.Close()}); $f.Controls.Add($x); [void]$f.ShowDialog()"#;
     let program = std::env::var_os("ProgramFiles").map(std::path::PathBuf::from)
         .map(|p| p.join("PowerShell").join("7").join("pwsh.exe")).filter(|p| p.is_file())
         .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"));

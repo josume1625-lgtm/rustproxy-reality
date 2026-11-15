@@ -70,6 +70,11 @@ fn build_config(config: &Value) -> Result<Value> {
 
 fn invoke(config: &[u8], test: bool) -> Result<()> {
     let mut command = Command::new(xray());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
     command.args(["run", "-config", "stdin:"]);
     if test { command.arg("-test"); }
     let mut child = command.stdin(Stdio::piped()).spawn()?;

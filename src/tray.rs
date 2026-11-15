@@ -181,9 +181,7 @@ mod windows {
     }
     pub fn run(config:Option<&str>,client:bool,wizard:Option<Wizard>)->Result<(),Box<dyn Error>> {
         let explicit=config.map(|p|std::env::current_dir().map(|d|d.join(p))).transpose()?;
-        let remembered=if explicit.is_none() { previous_config(client) } else {None};
-        let autostart=remembered.is_some();
-        let config=explicit.or(remembered);
+        let config=explicit;
         let state=Box::new(RefCell::new(State {config,running:None,running_http:None,client,proxy_on:false,taskbar_msg:unsafe{RegisterWindowMessageW(wide("TaskbarCreated").as_ptr())},wizard}));
         unsafe {
             STATE=&*state;
@@ -199,8 +197,7 @@ mod windows {
                 if choice==6 { match proxy_command(&["off"]) { Ok(())=>message(hwnd,"系统代理已恢复。"), Err(e)=>message(hwnd,&format!("恢复失败，备份已保留：{e}")) } }
             }
             let (needs_config, startup_wizard)={ let s=state.borrow(); (s.config.is_none(), s.wizard) };
-            if autostart { start_selected(hwnd,&mut state.borrow_mut()); }
-            else if needs_config {
+            if needs_config {
                 if let Some(wizard)=startup_wizard {
                     message(hwnd,"欢迎使用 RustProxy。现在打开配置向导；取消后可右键托盘图标重新打开。");
                     match wizard() { Ok(Some(path))=>{ let mut s=state.borrow_mut(); choose_config(hwnd,&mut s,path); start_selected(hwnd,&mut s); }, Ok(None)=>(), Err(e)=>message(hwnd,&format!("配置向导失败：{e}")) }

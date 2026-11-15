@@ -212,9 +212,23 @@ function TextAt($text, $top) {
 }
 LabelAt '本地监听端口（留空或填 0 表示自动选择）' 15
 $port = TextAt '' 40
-LabelAt '将内网穿透程序指向 127.0.0.1 和所选端口。' 80
-LabelAt '自动生成加密密钥，流量通过本机网络转发。' 110
-LabelAt '连接文件含凭据，请只通过可信的加密渠道分享。' 140
+function Set-RandomPort {
+  $tcp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+  $tcp.Start()
+  try { $port.Text = ([Net.IPEndPoint]$tcp.LocalEndpoint).Port.ToString() } finally { $tcp.Stop() }
+}
+$random = New-Object System.Windows.Forms.Button
+$random.Text = '随机端口'; $random.Left = 390; $random.Top = 38; $random.Width = 90
+$random.Add_Click({ Set-RandomPort })
+$manual = New-Object System.Windows.Forms.Button
+$manual.Text = '手动输入'; $manual.Left = 485; $manual.Top = 38; $manual.Width = 60
+$manual.Add_Click({ $port.ReadOnly = $false; $port.Focus() })
+$port.ReadOnly = $true
+$form.Controls.Add($random); $form.Controls.Add($manual)
+LabelAt '留空时自动分配。手动端口会先检查是否空闲。' 65
+LabelAt '将内网穿透程序指向 127.0.0.1 和所选端口。' 100
+LabelAt '自动生成加密密钥，流量通过本机网络转发。' 130
+LabelAt '连接文件含凭据，请只通过可信的加密渠道分享。' 160
 $ok = New-Object System.Windows.Forms.Button
 $ok.Text = '启动服务'; $ok.Left = 340; $ok.Top = 195; $ok.Width = 90
 $ok.DialogResult = [System.Windows.Forms.DialogResult]::OK

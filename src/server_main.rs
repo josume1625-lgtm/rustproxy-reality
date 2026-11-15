@@ -10,16 +10,25 @@ fn setup_wizard() -> Result<Option<PathBuf>> {
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis();
     let directory = PathBuf::from(root).join("RustProxy").join("servers").join(format!("profile-{stamp}-{}", std::process::id()));
     let Some(result) = server_setup::wizard(&directory)? else { return Ok(None) };
-    notify(&format!("配置已生成，本机监听地址：127.0.0.1:{}\n\n请将内网穿透程序的本地目标设为该地址。\n客户端连接文件：{}\n\n通过可信的加密方式分享客户端文件，在客户端填写穿透后的公网地址和端口。私钥和连接凭据以明文保存在本地，请限制目录访问。", result.port, result.client_config.display()));
+    let profile: serde_json::Value = serde_json::from_slice(&std::fs::read(&result.client_config)?)?;
+    let details = format!("本机监听：127.0.0.1:{}\nUUID：{}\nPublic key：{}\nShort ID：{}\nServer name：{}\n\n客户端配置：{}", result.port, profile["uuid"], profile["public_key"], profile["short_id"], profile["server_name"], result.client_config.display());
+    notify(&details);
     Ok(Some(result.server_config))
 }
 
 #[cfg(windows)]
 fn notify(text: &str) {
-    #[link(name="user32")] extern "system" { fn MessageBoxW(hwnd: *mut std::ffi::c_void, text: *const u16, caption: *const u16, flags: u32) -> i32; }
-    let text: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-    let caption: Vec<u16> = "RustProxy 服务端".encode_utf16().chain(Some(0)).collect();
-    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), caption.as_ptr(), 0x40); }
+    use std::os::windows::process::CommandExt;
+    const SCRIPT: &str = r#"Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $d=[Console]::In.ReadToEnd(); $f=New-Object Windows.Forms.Form; $f.Text='RustProxy 连接密钥'; $f.ClientSize='640,360'; $f.StartPosition='CenterScreen'; $b=New-Object Windows.Forms.TextBox; $b.Multiline=$true; $b.ReadOnly=$true; $b.ScrollBars='Vertical'; $b.SetBounds(15,15,610,275); $b.Text=$d; $f.Controls.Add($b); $c=New-Object Windows.Forms.Button; $c.Text='复制连接信息'; $c.SetBounds(300,310,190,30); $c.Add_Click({[Windows.Forms.Clipboard]::SetText($d);$c.Text='已复制'}); $f.Controls.Add($c); $x=New-Object Windows.Forms.Button; $x.Text='关闭'; $x.SetBounds(510,310,90,30); $x.Add_Click({$f.Close()}); $f.Controls.Add($x); [void]$f.ShowDialog()"#;
+    let program = std::env::var_os("ProgramFiles").map(std::path::PathBuf::from)
+        .map(|p| p.join("PowerShell").join("7").join("pwsh.exe")).filter(|p| p.is_file())
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"));
+    if let Ok(mut child) = std::process::Command::new(program)
+        .args(["-NoLogo", "-NoProfile", "-STA", "-Command", SCRIPT])
+        .creation_flags(0x08000000).stdin(std::process::Stdio::piped()).spawn() {
+        if let Some(mut stdin) = child.stdin.take() { use std::io::Write; let _ = stdin.write_all(text.as_bytes()); }
+        let _ = child.wait();
+    }
 }
 #[cfg(not(windows))]
 fn notify(text: &str) { println!("{text}"); }

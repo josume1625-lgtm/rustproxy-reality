@@ -19,12 +19,12 @@ fn setup_wizard() -> Result<Option<PathBuf>> {
 #[cfg(windows)]
 fn notify(text: &str) {
     use std::os::windows::process::CommandExt;
-    const SCRIPT: &str = r#"Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $d=[Console]::In.ReadToEnd(); $f=New-Object Windows.Forms.Form; $f.Text='RustProxy 连接密钥'; $f.ClientSize='640,360'; $f.StartPosition='CenterScreen'; $b=New-Object Windows.Forms.TextBox; $b.Multiline=$true; $b.ReadOnly=$true; $b.ScrollBars='Vertical'; $b.SetBounds(15,15,610,275); $b.Text=$d; $f.Controls.Add($b); $c=New-Object Windows.Forms.Button; $c.Text='复制连接信息'; $c.SetBounds(300,310,190,30); $c.Add_Click({[Windows.Forms.Clipboard]::SetText($d);$c.Text='已复制'}); $f.Controls.Add($c); $x=New-Object Windows.Forms.Button; $x.Text='关闭'; $x.SetBounds(510,310,90,30); $x.Add_Click({$f.Close()}); $f.Controls.Add($x); [void]$f.ShowDialog()"#;
+    const SCRIPT: &str = r#"Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; [Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $d=[Console]::In.ReadToEnd(); $f=New-Object Windows.Forms.Form; $f.Text='RustProxy 连接密钥'; $f.ClientSize='640,360'; $f.StartPosition='CenterScreen'; $b=New-Object Windows.Forms.TextBox; $b.Multiline=$true; $b.ReadOnly=$true; $b.ScrollBars='Vertical'; $b.SetBounds(15,15,610,275); $b.Text=$d; $f.Controls.Add($b); $c=New-Object Windows.Forms.Button; $c.Text='复制连接信息'; $c.SetBounds(300,310,190,30); $c.Add_Click({[Windows.Forms.Clipboard]::SetText($d);$c.Text='已复制'}); $f.Controls.Add($c); $x=New-Object Windows.Forms.Button; $x.Text='关闭'; $x.SetBounds(510,310,90,30); $x.Add_Click({$f.Close()}); $f.Controls.Add($x); [void]$f.ShowDialog()"#;
     let program = std::env::var_os("ProgramFiles").map(std::path::PathBuf::from)
         .map(|p| p.join("PowerShell").join("7").join("pwsh.exe")).filter(|p| p.is_file())
         .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"));
     if let Ok(mut child) = std::process::Command::new(program)
-        .args(["-NoLogo", "-NoProfile", "-STA", "-Command", SCRIPT])
+        .args(["-NoLogo", "-NoProfile", "-STA", "-EncodedCommand", &server_setup::utf16_base64(SCRIPT)])
         .creation_flags(0x08000000).stdin(std::process::Stdio::piped()).spawn() {
         if let Some(mut stdin) = child.stdin.take() { use std::io::Write; let _ = stdin.write_all(text.as_bytes()); }
         let _ = child.wait();

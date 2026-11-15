@@ -168,7 +168,7 @@ fn create_with_port(directory: &Path, address: &str, server_name: &str, dest: &s
 }
 
 #[cfg(windows)]
-fn utf16_base64(input: &str) -> String {
+pub(crate) fn utf16_base64(input: &str) -> String {
     let bytes: Vec<u8> = input.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity((bytes.len() + 2) / 3 * 4);
@@ -212,6 +212,7 @@ function TextAt($text, $top) {
 }
 LabelAt '本地监听端口（留空或填 0 表示自动选择）' 15
 $port = TextAt '' 40
+$port.Width = 350
 function Set-RandomPort {
   $tcp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
   $tcp.Start()
@@ -223,7 +224,7 @@ $random.Add_Click({ Set-RandomPort })
 $manual = New-Object System.Windows.Forms.Button
 $manual.Text = '手动输入'; $manual.Left = 485; $manual.Top = 38; $manual.Width = 60
 $manual.Add_Click({ $port.ReadOnly = $false; $port.Focus() })
-$port.ReadOnly = $true
+$port.ReadOnly = $false
 $form.Controls.Add($random); $form.Controls.Add($manual)
 LabelAt '留空时自动分配。手动端口会先检查是否空闲。' 65
 LabelAt '将内网穿透程序指向 127.0.0.1 和所选端口。' 100
